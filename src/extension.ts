@@ -5,7 +5,7 @@ import {
   Answer,
   ClarifyingQuestion,
   Provider,
-} from './ollama';
+} from './llm';
 
 function secretKeyFor(provider: string): string {
   return `askfirst.apiKey.${provider}`;
