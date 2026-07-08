@@ -1,22 +1,36 @@
 import * as vscode from 'vscode';
-import { generateQuestions, rewritePrompt, Answer, ClarifyingQuestion } from './ollama';
+import {
+  generateQuestions,
+  rewritePrompt,
+  Answer,
+  ClarifyingQuestion,
+  Provider,
+} from './ollama';
 
-const API_KEY_SECRET = 'askfirst.apiKey';
+function secretKeyFor(provider: string): string {
+  return `askfirst.apiKey.${provider}`;
+}
+
+function currentProvider(): Provider {
+  return vscode.workspace.getConfiguration('askfirst').get<Provider>('provider', 'ollama');
+}
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('askfirst.setApiKey', () => setApiKey(context)),
     vscode.commands.registerCommand('askfirst.clearApiKey', () => clearApiKey(context)),
-    vscode.commands.registerCommand('askfirst.refinePrompt', () => refinePrompt()),
+    vscode.commands.registerCommand('askfirst.refinePrompt', () => refinePrompt(context)),
   );
 }
 
 export function deactivate() {}
 
 async function setApiKey(context: vscode.ExtensionContext): Promise<void> {
-  const provider = vscode.workspace.getConfiguration('askfirst').get<string>('provider', 'ollama');
-  if (provider === 'ollama') {
-    vscode.window.showInformationMessage('AskFirst: Ollama runs locally and needs no API key.');
+  const provider = await vscode.window.showQuickPick(['anthropic', 'openai'], {
+    title: 'AskFirst: which provider is this key for?',
+    placeHolder: 'Ollama runs locally and needs no key',
+  });
+  if (!provider) {
     return;
   }
   const key = await vscode.window.showInputBox({
@@ -25,17 +39,48 @@ async function setApiKey(context: vscode.ExtensionContext): Promise<void> {
     ignoreFocusOut: true,
   });
   if (key) {
-    await context.secrets.store(API_KEY_SECRET, key);
-    vscode.window.showInformationMessage('AskFirst: API key saved.');
+    await context.secrets.store(secretKeyFor(provider), key.trim());
+    vscode.window.showInformationMessage(
+      `AskFirst: ${provider} API key saved. Set "askfirst.provider" to "${provider}" to use it.`,
+    );
   }
 }
 
 async function clearApiKey(context: vscode.ExtensionContext): Promise<void> {
-  await context.secrets.delete(API_KEY_SECRET);
-  vscode.window.showInformationMessage('AskFirst: API key cleared.');
+  await context.secrets.delete(secretKeyFor('anthropic'));
+  await context.secrets.delete(secretKeyFor('openai'));
+  vscode.window.showInformationMessage('AskFirst: all stored API keys cleared.');
 }
 
-async function refinePrompt(): Promise<void> {
+/** Returns the API key for the active provider, prompting the user to set one if needed. */
+async function resolveApiKey(context: vscode.ExtensionContext): Promise<string | undefined> {
+  const provider = currentProvider();
+  if (provider === 'ollama') {
+    return undefined; // local — no key needed
+  }
+  let key = await context.secrets.get(secretKeyFor(provider));
+  if (!key) {
+    const choice = await vscode.window.showWarningMessage(
+      `AskFirst: provider is set to "${provider}" but no API key is stored. Set one now?`,
+      'Set API Key',
+    );
+    if (choice !== 'Set API Key') {
+      return undefined;
+    }
+    await vscode.commands.executeCommand('askfirst.setApiKey');
+    key = await context.secrets.get(secretKeyFor(provider));
+  }
+  return key;
+}
+
+async function refinePrompt(context: vscode.ExtensionContext): Promise<void> {
+  // 0. Cloud providers need a key; Ollama doesn't.
+  const provider = currentProvider();
+  const apiKey = await resolveApiKey(context);
+  if (provider !== 'ollama' && !apiKey) {
+    return; // user declined to set a key
+  }
+
   // 1. Get the rough prompt: current selection, or ask for it.
   const editor = vscode.window.activeTextEditor;
   const selection = editor?.document.getText(editor.selection)?.trim();
@@ -50,7 +95,7 @@ async function refinePrompt(): Promise<void> {
     return;
   }
 
-  // 2. Ask Ollama for clarifying questions.
+  // 2. Generate clarifying questions.
   let questions: ClarifyingQuestion[];
   try {
     questions = await vscode.window.withProgress(
@@ -59,7 +104,7 @@ async function refinePrompt(): Promise<void> {
         title: 'AskFirst: analyzing your prompt…',
         cancellable: false,
       },
-      () => generateQuestions(roughPrompt),
+      () => generateQuestions(roughPrompt, apiKey),
     );
   } catch (e) {
     vscode.window.showErrorMessage(`AskFirst: ${(e as Error).message}`);
@@ -88,7 +133,7 @@ async function refinePrompt(): Promise<void> {
         title: 'AskFirst: rewriting your prompt…',
         cancellable: false,
       },
-      () => rewritePrompt(roughPrompt, answers),
+      () => rewritePrompt(roughPrompt, answers, apiKey),
     );
   } catch (e) {
     vscode.window.showErrorMessage(`AskFirst: ${(e as Error).message}`);

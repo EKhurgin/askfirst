@@ -51,12 +51,12 @@
             "openai"
           ],
           "default": "ollama",
-          "description": "AI provider. Ollama runs locally and needs no API key (cloud providers coming later)."
+          "description": "AI provider. Ollama runs locally and needs no API key; for Anthropic/OpenAI, store a key via 'AskFirst: Set API Key'."
         },
         "askfirst.model": {
           "type": "string",
-          "default": "llama3.2",
-          "description": "Model name. For Ollama, pull it first (e.g. `ollama pull llama3.2`)."
+          "default": "",
+          "description": "Model name. Leave empty for the provider default (ollama: llama3.2, anthropic: claude-sonnet-5, openai: gpt-4o-mini)."
         },
         "askfirst.ollamaUrl": {
           "type": "string",

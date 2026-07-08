@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 
+export type Provider = 'ollama' | 'anthropic' | 'openai';
+
 export interface ClarifyingQuestion {
   question: string;
   options: string[];
@@ -15,26 +17,59 @@ interface ChatMessage {
   content: string;
 }
 
+const DEFAULT_MODELS: Record<Provider, string> = {
+  ollama: 'llama3.2',
+  anthropic: 'claude-sonnet-5',
+  openai: 'gpt-4o-mini',
+};
+
 function getConfig() {
   const cfg = vscode.workspace.getConfiguration('askfirst');
+  const provider = cfg.get<Provider>('provider', 'ollama');
   return {
-    baseUrl: cfg.get<string>('ollamaUrl', 'http://localhost:11434').replace(/\/$/, ''),
-    model: cfg.get<string>('model', '') || 'llama3.2',
+    provider,
+    model: cfg.get<string>('model', '') || DEFAULT_MODELS[provider],
+    ollamaUrl: cfg.get<string>('ollamaUrl', 'http://localhost:11434').replace(/\/$/, ''),
   };
 }
 
-async function chat(messages: ChatMessage[], format?: object, temperature = 0.2): Promise<string> {
-  const { baseUrl, model } = getConfig();
+// ---------------------------------------------------------------------------
+// Provider backends
+// ---------------------------------------------------------------------------
+
+async function chat(
+  messages: ChatMessage[],
+  schema: object | undefined,
+  temperature: number,
+  apiKey?: string,
+): Promise<string> {
+  const { provider } = getConfig();
+  switch (provider) {
+    case 'anthropic':
+      return anthropicChat(messages, schema, temperature, apiKey);
+    case 'openai':
+      return openaiChat(messages, schema, temperature, apiKey);
+    default:
+      return ollamaChat(messages, schema, temperature);
+  }
+}
+
+async function ollamaChat(
+  messages: ChatMessage[],
+  schema: object | undefined,
+  temperature: number,
+): Promise<string> {
+  const { ollamaUrl, model } = getConfig();
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}/api/chat`, {
+    res = await fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
         messages,
         stream: false,
-        ...(format ? { format } : {}),
+        ...(schema ? { format: schema } : {}),
         // num_ctx: Ollama defaults to a 4096-token window and silently truncates
         // beyond it — raise it so our prompts + examples always fit.
         options: { temperature, num_ctx: 8192 },
@@ -42,7 +77,7 @@ async function chat(messages: ChatMessage[], format?: object, temperature = 0.2)
     });
   } catch {
     throw new Error(
-      `Could not reach Ollama at ${baseUrl}. Is it running? Start it with \`ollama serve\` (install from ollama.com).`,
+      `Could not reach Ollama at ${ollamaUrl}. Is it running? Start it with \`ollama serve\` (install from ollama.com).`,
     );
   }
   if (!res.ok) {
@@ -60,11 +95,110 @@ async function chat(messages: ChatMessage[], format?: object, temperature = 0.2)
   return content;
 }
 
+/** Cloud models don't take a schema parameter the way Ollama does — embed it in the prompt instead. */
+function withSchemaInstruction(messages: ChatMessage[], schema: object | undefined): ChatMessage[] {
+  if (!schema) {
+    return messages;
+  }
+  const out = messages.map((m) => ({ ...m }));
+  out[out.length - 1].content +=
+    `\n\nRespond with ONLY valid JSON conforming to this JSON schema — no prose, no code fences:\n${JSON.stringify(schema)}`;
+  return out;
+}
+
+async function anthropicChat(
+  messages: ChatMessage[],
+  schema: object | undefined,
+  temperature: number,
+  apiKey?: string,
+): Promise<string> {
+  if (!apiKey) {
+    throw new Error('No Anthropic API key set. Run "AskFirst: Set API Key" first.');
+  }
+  const { model } = getConfig();
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 4096,
+      temperature,
+      messages: withSchemaInstruction(messages, schema),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    if (res.status === 401) {
+      throw new Error('Anthropic rejected the API key. Run "AskFirst: Set API Key" to update it.');
+    }
+    throw new Error(`Anthropic error ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+  const text = data.content?.find((b) => b.type === 'text')?.text;
+  if (!text) {
+    throw new Error('Anthropic returned an empty response.');
+  }
+  return text;
+}
+
+async function openaiChat(
+  messages: ChatMessage[],
+  schema: object | undefined,
+  temperature: number,
+  apiKey?: string,
+): Promise<string> {
+  if (!apiKey) {
+    throw new Error('No OpenAI API key set. Run "AskFirst: Set API Key" first.');
+  }
+  const { model } = getConfig();
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature,
+      messages: withSchemaInstruction(messages, schema),
+      ...(schema ? { response_format: { type: 'json_object' } } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    if (res.status === 401) {
+      throw new Error('OpenAI rejected the API key. Run "AskFirst: Set API Key" to update it.');
+    }
+    throw new Error(`OpenAI error ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) {
+    throw new Error('OpenAI returned an empty response.');
+  }
+  return text;
+}
+
 function parseJson<T>(content: string, what: string): T {
+  // Tolerate code fences or stray prose around the JSON.
+  let text = content.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) {
+    text = fence[1];
+  }
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    text = text.slice(start, end + 1);
+  }
   try {
-    return JSON.parse(content) as T;
+    return JSON.parse(text) as T;
   } catch {
-    throw new Error(`Ollama returned malformed JSON for the ${what}. Try again.`);
+    throw new Error(`The model returned malformed JSON for the ${what}. Try again.`);
   }
 }
 
@@ -91,7 +225,7 @@ interface Analysis {
   missing: string[];
 }
 
-async function analyzePrompt(roughPrompt: string): Promise<Analysis> {
+async function analyzePrompt(roughPrompt: string, apiKey?: string): Promise<Analysis> {
   const content = await chat(
     [
       {
@@ -114,6 +248,7 @@ Respond in JSON.`,
     ],
     ANALYZE_SCHEMA,
     0.1,
+    apiKey,
   );
   return parseJson<Analysis>(content, 'analysis');
 }
@@ -147,8 +282,11 @@ const QUESTIONS_SCHEMA = {
   required: ['questions'],
 };
 
-export async function generateQuestions(roughPrompt: string): Promise<ClarifyingQuestion[]> {
-  const analysis = await analyzePrompt(roughPrompt);
+export async function generateQuestions(
+  roughPrompt: string,
+  apiKey?: string,
+): Promise<ClarifyingQuestion[]> {
+  const analysis = await analyzePrompt(roughPrompt, apiKey);
 
   const missingList = analysis.missing.map((m, i) => `${i + 1}. ${m}`).join('\n');
   const content = await chat(
@@ -179,6 +317,7 @@ Respond in JSON.`,
     ],
     QUESTIONS_SCHEMA,
     0.3,
+    apiKey,
   );
 
   const parsed = parseJson<{ questions?: ClarifyingQuestion[] }>(content, 'questions');
@@ -196,7 +335,11 @@ Respond in JSON.`,
 // small models handle far better than freeform composition.
 // ---------------------------------------------------------------------------
 
-export async function rewritePrompt(roughPrompt: string, answers: Answer[]): Promise<string> {
+export async function rewritePrompt(
+  roughPrompt: string,
+  answers: Answer[],
+  apiKey?: string,
+): Promise<string> {
   const qaBlock = answers.map((a) => `- ${a.question}\n  Answer: ${a.answer}`).join('\n');
 
   return chat(
@@ -239,5 +382,6 @@ Rules:
     ],
     undefined,
     0.4,
+    apiKey,
   );
 }
