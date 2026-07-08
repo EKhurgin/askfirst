@@ -1,0 +1,17 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "compile",
+      "type": "shell",
+      "command": "npm run compile",
+      "options": {
+        "env": {
+          "PATH": "/Users/eli/.nvm/versions/node/v24.8.0/bin:/usr/local/bin:/usr/bin:/bin"
+        }
+      },
+      "problemMatcher": "$tsc",
+      "group": { "kind": "build", "isDefault": true }
+    }
+  ]
+}

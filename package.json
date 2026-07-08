@@ -1,0 +1,89 @@
+{
+  "name": "askfirst",
+  "displayName": "AskFirst",
+  "description": "Refines your AI prompts by asking clarifying questions first, then rewriting the prompt. Runs locally via Ollama — free and private.",
+  "version": "0.0.1",
+  "publisher": "your-publisher-id",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_GITHUB_USERNAME/askfirst.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "prompt",
+    "prompt engineering",
+    "ai",
+    "llm",
+    "clarify"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "askfirst.refinePrompt",
+        "title": "AskFirst: Refine Prompt"
+      },
+      {
+        "command": "askfirst.setApiKey",
+        "title": "AskFirst: Set API Key"
+      },
+      {
+        "command": "askfirst.clearApiKey",
+        "title": "AskFirst: Clear API Key"
+      }
+    ],
+    "configuration": {
+      "title": "AskFirst",
+      "properties": {
+        "askfirst.provider": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "anthropic",
+            "openai"
+          ],
+          "default": "ollama",
+          "description": "AI provider. Ollama runs locally and needs no API key (cloud providers coming later)."
+        },
+        "askfirst.model": {
+          "type": "string",
+          "default": "llama3.2",
+          "description": "Model name. For Ollama, pull it first (e.g. `ollama pull llama3.2`)."
+        },
+        "askfirst.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL of your Ollama server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && node esbuild.js --production",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "20.x",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.11.0",
+    "esbuild": "^0.21.5",
+    "eslint": "^8.57.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.4.5"
+  }
+}
