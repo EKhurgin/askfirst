@@ -2,7 +2,7 @@
 
 A VS Code extension that refines your AI prompts. Instead of guessing what you mean, AskFirst asks you a few targeted clarifying questions, then rewrites your prompt so any AI can understand exactly what you want.
 
-**Local-first, free by default** — AskFirst runs on [Ollama](https://ollama.com) out of the box, so your prompts never leave your machine and there are no token costs. Prefer a stronger model? Plug in your own Anthropic or OpenAI API key (stored in your OS keychain via VS Code SecretStorage — it never leaves your computer).
+**Local-first, free by default** — AskFirst runs on [Ollama](https://ollama.com) out of the box, so your prompts never leave your machine and there are no token costs. Prefer a stronger model? Anthropic and OpenAI are supported using your own account credentials, stored in the OS keychain via VS Code SecretStorage.
 
 ## How it works
 
@@ -21,9 +21,9 @@ A VS Code extension that refines your AI prompts. Instead of guessing what you m
    ```
 2. Install the extension — that's it. Run **AskFirst: Refine Prompt** from the Command Palette (`Cmd/Ctrl+Shift+P`)
 
-### Option B: Anthropic or OpenAI (bring your own key)
+### Option B: Anthropic or OpenAI
 
-1. Run **AskFirst: Set API Key**, choose the provider, and paste your key
+1. Run **AskFirst: Set API Key** from the Command Palette and choose the provider
 2. In Settings → AskFirst, set `askfirst.provider` to `anthropic` or `openai`
 
 ## Settings
