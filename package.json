@@ -49,6 +49,55 @@
         "title": "AskFirst: Clear API Key"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "askfirst.refinePrompt",
+          "when": "editorHasSelection",
+          "group": "1_modification@100"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "askfirst.refinePrompt",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "askfirst.gettingStarted",
+        "title": "Get started with AskFirst",
+        "description": "Turn rough AI prompts into precise ones by answering a few questions.",
+        "steps": [
+          {
+            "id": "askfirst.installOllama",
+            "title": "Install Ollama",
+            "description": "AskFirst runs on a local model via Ollama — free and private, no account needed.\n[Get Ollama](https://ollama.com)",
+            "media": {
+              "markdown": "media/walkthrough/ollama.md"
+            }
+          },
+          {
+            "id": "askfirst.pullModel",
+            "title": "Pull the model",
+            "description": "Download the default model (one-time, ~2 GB):\n``ollama pull llama3.2``",
+            "media": {
+              "markdown": "media/walkthrough/model.md"
+            }
+          },
+          {
+            "id": "askfirst.firstRefine",
+            "title": "Refine your first prompt",
+            "description": "Select rough prompt text (or just run the command), answer the questions, get a precise prompt.\n[Refine a Prompt](command:askfirst.refinePrompt)",
+            "media": {
+              "markdown": "media/walkthrough/refine.md"
+            }
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "AskFirst",
       "properties": {
@@ -71,6 +120,11 @@
           "type": "string",
           "default": "http://localhost:11434",
           "description": "Base URL of your Ollama server."
+        },
+        "askfirst.autoCopy": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically copy the refined prompt to the clipboard."
         }
       }
     }

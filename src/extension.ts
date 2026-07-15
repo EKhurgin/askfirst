@@ -16,7 +16,14 @@ function currentProvider(): Provider {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBar.text = '$(sparkle) AskFirst';
+  statusBar.tooltip = 'Refine a prompt with clarifying questions';
+  statusBar.command = 'askfirst.refinePrompt';
+  statusBar.show();
+
   context.subscriptions.push(
+    statusBar,
     vscode.commands.registerCommand('askfirst.setApiKey', () => setApiKey(context)),
     vscode.commands.registerCommand('askfirst.clearApiKey', () => clearApiKey(context)),
     vscode.commands.registerCommand('askfirst.refinePrompt', () => refinePrompt(context)),
@@ -111,17 +118,10 @@ async function refinePrompt(context: vscode.ExtensionContext): Promise<void> {
     return;
   }
 
-  // 3. Walk the user through the questions.
-  const answers: Answer[] = [];
-  for (let i = 0; i < questions.length; i++) {
-    const q = questions[i];
-    const answer = await askQuestion(q, i + 1, questions.length);
-    if (answer === undefined) {
-      return; // user pressed Escape — abort quietly
-    }
-    if (answer !== SKIP) {
-      answers.push({ question: q.question, answer: answer as string });
-    }
+  // 3. Walk the user through the questions (with back navigation).
+  const answers = await askAllQuestions(questions);
+  if (answers === undefined) {
+    return; // user aborted
   }
 
   // 4. Rewrite the prompt with the clarifications.
@@ -139,52 +139,148 @@ async function refinePrompt(context: vscode.ExtensionContext): Promise<void> {
     vscode.window.showErrorMessage(`AskFirst: ${(e as Error).message}`);
     return;
   }
+  refined = refined.trim();
 
-  // 5. Show the result in a new editor tab beside the current one.
+  // 5. Show the result beside the editor, with quick actions.
   const doc = await vscode.workspace.openTextDocument({
-    content: refined.trim(),
+    content: refined,
     language: 'markdown',
   });
   await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+
+  const autoCopy = vscode.workspace.getConfiguration('askfirst').get<boolean>('autoCopy', false);
+  if (autoCopy) {
+    await vscode.env.clipboard.writeText(refined);
+  }
+  const action = await vscode.window.showInformationMessage(
+    autoCopy ? 'AskFirst: refined prompt ready (copied to clipboard).' : 'AskFirst: refined prompt ready.',
+    ...(autoCopy ? ['Refine Again'] : ['Copy Prompt', 'Refine Again']),
+  );
+  if (action === 'Copy Prompt') {
+    await vscode.env.clipboard.writeText(refined);
+  } else if (action === 'Refine Again') {
+    await vscode.commands.executeCommand('askfirst.refinePrompt');
+  }
 }
 
+// ---------------------------------------------------------------------------
+// Question flow
+// ---------------------------------------------------------------------------
+
 const SKIP = Symbol('skip');
+type Given = string | typeof SKIP;
 const OTHER_LABEL = '$(edit) Type my own answer…';
 const SKIP_LABEL = '$(debug-step-over) Skip this question';
 
+type StepResult =
+  | { kind: 'answer'; value: Given }
+  | { kind: 'back' }
+  | { kind: 'retry' }
+  | { kind: 'cancel' };
+
+/** Runs the full question sequence. Returns undefined if the user aborts. */
+async function askAllQuestions(questions: ClarifyingQuestion[]): Promise<Answer[] | undefined> {
+  const given: Given[] = [];
+  let i = 0;
+  while (i < questions.length) {
+    const step = await askQuestion(questions[i], i + 1, questions.length, i > 0);
+    switch (step.kind) {
+      case 'answer':
+        given[i] = step.value;
+        i++;
+        break;
+      case 'back':
+        i--;
+        break;
+      case 'retry':
+        break;
+      case 'cancel': {
+        const answered = given.filter((g) => g !== undefined && g !== SKIP).length;
+        if (answered === 0) {
+          return undefined; // nothing to lose — abort quietly
+        }
+        const choice = await vscode.window.showWarningMessage(
+          `Discard your ${answered} answer${answered === 1 ? '' : 's'}?`,
+          { modal: true },
+          'Discard',
+        );
+        if (choice === 'Discard') {
+          return undefined;
+        }
+        break; // resume on the same question
+      }
+    }
+  }
+  return questions
+    .map((q, idx) => ({ question: q.question, answer: given[idx] }))
+    .filter((a): a is Answer => typeof a.answer === 'string');
+}
+
+/** Shows one question as a QuickPick with an optional back button. */
 async function askQuestion(
   q: ClarifyingQuestion,
   index: number,
   total: number,
-): Promise<string | typeof SKIP | undefined> {
-  const items: vscode.QuickPickItem[] = [
-    ...q.options.map((o) => ({ label: o })),
-    { label: '', kind: vscode.QuickPickItemKind.Separator },
-    { label: OTHER_LABEL },
-    { label: SKIP_LABEL },
-  ];
-
-  const picked = await vscode.window.showQuickPick(items, {
-    title: `AskFirst (${index}/${total})`,
-    placeHolder: q.question,
-    ignoreFocusOut: true,
+  canGoBack: boolean,
+): Promise<StepResult> {
+  const picked = await new Promise<'back' | 'cancel' | string>((resolve) => {
+    const qp = vscode.window.createQuickPick();
+    qp.title = `AskFirst (${index}/${total})`;
+    qp.placeholder = q.question;
+    qp.ignoreFocusOut = true;
+    qp.items = [
+      ...q.options.map((o) => ({ label: o })),
+      { label: '', kind: vscode.QuickPickItemKind.Separator },
+      { label: OTHER_LABEL },
+      { label: SKIP_LABEL },
+    ];
+    if (canGoBack) {
+      qp.buttons = [vscode.QuickInputButtons.Back];
+    }
+    let settled = false;
+    qp.onDidTriggerButton((button) => {
+      if (button === vscode.QuickInputButtons.Back) {
+        settled = true;
+        resolve('back');
+        qp.hide();
+      }
+    });
+    qp.onDidAccept(() => {
+      const sel = qp.selectedItems[0];
+      if (sel && sel.label) {
+        settled = true;
+        resolve(sel.label);
+        qp.hide();
+      }
+    });
+    qp.onDidHide(() => {
+      if (!settled) {
+        resolve('cancel');
+      }
+      qp.dispose();
+    });
+    qp.show();
   });
-  if (!picked) {
-    return undefined;
+
+  if (picked === 'back') {
+    return { kind: 'back' };
   }
-  if (picked.label === SKIP_LABEL) {
-    return SKIP;
+  if (picked === 'cancel') {
+    return { kind: 'cancel' };
   }
-  if (picked.label === OTHER_LABEL) {
+  if (picked === SKIP_LABEL) {
+    return { kind: 'answer', value: SKIP };
+  }
+  if (picked === OTHER_LABEL) {
     const custom = await vscode.window.showInputBox({
       title: `AskFirst (${index}/${total})`,
       prompt: q.question,
       ignoreFocusOut: true,
     });
     if (custom === undefined) {
-      return undefined;
+      return { kind: 'retry' }; // escape from typing → back to this question's options
     }
-    return custom.trim() || SKIP;
+    return { kind: 'answer', value: custom.trim() || SKIP };
   }
-  return picked.label;
+  return { kind: 'answer', value: picked };
 }
