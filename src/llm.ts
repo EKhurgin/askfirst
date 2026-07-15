@@ -216,13 +216,21 @@ const ANALYZE_SCHEMA = {
       minItems: 3,
       maxItems: 5,
     },
+    is_technical: { type: 'boolean' },
+    missing_technical: {
+      type: 'array',
+      items: { type: 'string' },
+      maxItems: 3,
+    },
   },
-  required: ['goal', 'missing'],
+  required: ['goal', 'missing', 'is_technical', 'missing_technical'],
 };
 
 interface Analysis {
   goal: string;
   missing: string[];
+  is_technical: boolean;
+  missing_technical: string[];
 }
 
 async function analyzePrompt(roughPrompt: string, apiKey?: string): Promise<Analysis> {
@@ -238,9 +246,13 @@ ${roughPrompt}
 
 1. "goal": In one sentence, what is this person fundamentally trying to get?
 2. "missing": List 3-5 specific pieces of information NOT stated in the prompt that would most change what a good response looks like. Be concrete and specific to THIS prompt. Never list something the prompt already answers.
+3. "is_technical": true ONLY if fulfilling this prompt involves writing or modifying code, software, scripts, queries, or system configuration. Writing ABOUT technology (a blog post about AI) is NOT technical.
+4. "missing_technical": If is_technical is true, list 1-3 missing technical details that the code could not be written correctly without — such as programming language, framework, runtime/environment, whether it fits into an existing codebase, or how it will be run. If is_technical is false, or the prompt already states these, return an empty list.
 
 Example — for "write a blog post about AI", good missing items are:
-"which aspect of AI to focus on", "who will read the post and their technical level", "what the post should achieve (SEO traffic, authority, education)", "how long it should be".
+"which aspect of AI to focus on", "who will read the post and their technical level", "what the post should achieve (SEO traffic, authority, education)", "how long it should be" — and is_technical is false.
+Example — for "make a script that renames my files", is_technical is true and good missing_technical items are:
+"what OS/environment the script runs in (macOS shell, Windows, cross-platform Python)", "what the renaming rule is based on", "one-off script vs. reusable tool".
 Bad missing items (too generic): "more details", "the context", "the requirements".
 
 Respond in JSON.`,
@@ -263,7 +275,7 @@ const QUESTIONS_SCHEMA = {
     questions: {
       type: 'array',
       minItems: 3,
-      maxItems: 4,
+      maxItems: 5,
       items: {
         type: 'object',
         properties: {
@@ -289,6 +301,13 @@ export async function generateQuestions(
   const analysis = await analyzePrompt(roughPrompt, apiKey);
 
   const missingList = analysis.missing.map((m, i) => `${i + 1}. ${m}`).join('\n');
+  const technical = analysis.is_technical && analysis.missing_technical.length > 0;
+  const technicalBlock = technical
+    ? `\nThis TECHNICAL information is also missing (the code cannot be written correctly without it):\n${analysis.missing_technical.map((m, i) => `T${i + 1}. ${m}`).join('\n')}\n`
+    : '';
+  const countInstruction = technical
+    ? 'Write one multiple-choice question for each of the most important missing items (3-5 questions total). Include a question for each technical item (T1, T2...) — technical answer options must name concrete stacks/environments, e.g. "Python script run from the terminal", "Part of an existing React web app", "Node.js backend API".'
+    : 'Write one multiple-choice question for each of the most important missing items (3-4 questions total).';
   const content = await chat(
     [
       {
@@ -303,8 +322,8 @@ Their goal: ${analysis.goal}
 
 This information is missing:
 ${missingList}
-
-Write one multiple-choice question for each of the most important missing items (3-4 questions total). Each question gets 3-4 answer options.
+${technicalBlock}
+${countInstruction} Each question gets 3-4 answer options.
 
 Options must be concrete, realistic choices — describe real situations, not abstract categories.
 Bad options: "Formal", "Informal", "Neutral"
@@ -327,7 +346,7 @@ Respond in JSON.`,
   if (questions.length === 0) {
     throw new Error('No usable clarifying questions were generated. Try rephrasing your prompt.');
   }
-  return questions.slice(0, 4);
+  return questions.slice(0, 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +365,7 @@ export async function rewritePrompt(
     [
       {
         role: 'user',
-        content: `Rewrite this rough AI prompt into a detailed prompt, using the person's answers below. The result will be pasted into another AI, so it must be complete and self-contained.
+        content: `Rewrite this rough AI prompt into a precise prompt, using the person's answers below. The result will be pasted into another AI, so it must be complete and self-contained.
 
 Rough prompt:
 """
@@ -359,23 +378,18 @@ ${qaBlock}
 Write the improved prompt using EXACTLY this structure:
 
 # Task
-[2-3 sentences: exactly what to produce, incorporating the person's answers about what they want]
-
-# Audience & Purpose
-[Who will consume the output and what it must achieve — from their answers]
+[1-3 sentences. The FIRST sentence must state the single most important instruction — what to produce. Then who it is for and what it must achieve.]
 
 # Requirements
-[4-6 bullet points of specific, checkable requirements: format, length, structure, what must be included. Derive each from the rough prompt or an answer.]
-
-# Constraints
-[2-3 bullet points: what to avoid]
+[3-6 bullet points, each specific and checkable. Exactly ONE bullet must state the required output format and length explicitly (e.g. "a ~1200-word article with H2 sections", "a single Python file with type hints", "a 5-row markdown table"). Add "Avoid: ..." bullets only for real risks the answers imply.]
 
 # Success Criteria
-[2-3 bullet points: what makes the result excellent]
+[2-3 bullet points: how to tell the result is excellent. This section comes last on purpose — keep it sharp.]
 
 Rules:
-- Use EVERY answer the person gave. Do not drop or contradict any.
-- Do not invent requirements they didn't imply.
+- HARD LIMIT: the entire prompt must be under 250 words. Shorter and denser beats longer — every sentence must add information that changes the output. No filler, no restating the same point in two sections.
+- Use EVERY answer the person gave. Do not drop or contradict any. Do not invent requirements they didn't imply.
+- Include ONE short concrete example (a sample input/output, a line of the desired style) ONLY if it replaces a paragraph of abstract explanation. Otherwise include none.
 - Write directives: "Write...", "Include...", "Avoid...".
 - Output ONLY the prompt in that structure — no introduction, no commentary after.`,
       },
