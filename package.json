@@ -3,12 +3,21 @@
   "displayName": "AskFirst",
   "description": "Refines your AI prompts by asking clarifying questions first, then rewriting the prompt. Runs locally via Ollama — free and private.",
   "version": "0.0.1",
-  "publisher": "your-publisher-id",
+  "publisher": "ekhurgin",
   "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1e1b4b",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/YOUR_GITHUB_USERNAME/askfirst.git"
+    "url": "https://github.com/EKhurgin/askfirst.git"
   },
+  "bugs": {
+    "url": "https://github.com/EKhurgin/askfirst/issues"
+  },
+  "homepage": "https://github.com/EKhurgin/askfirst#readme",
   "engines": {
     "vscode": "^1.90.0"
   },
