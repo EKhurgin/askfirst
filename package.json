@@ -2,7 +2,7 @@
   "name": "askfirst",
   "displayName": "AskFirst",
   "description": "Refines your AI prompts by asking clarifying questions first, then rewriting the prompt. Runs locally via Ollama.",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "publisher": "ekhurgin",
   "license": "MIT",
   "icon": "images/icon.png",
