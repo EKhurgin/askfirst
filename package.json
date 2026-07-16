@@ -47,12 +47,34 @@
       {
         "command": "askfirst.clearApiKey",
         "title": "AskFirst: Clear API Key"
+      },
+      {
+        "command": "askfirst.openPanel",
+        "title": "AskFirst: Open Panel"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "askfirst",
+          "title": "AskFirst",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "askfirst": [
+        {
+          "type": "webview",
+          "id": "askfirst.panel",
+          "name": "Refine"
+        }
+      ]
+    },
     "menus": {
       "editor/context": [
         {
-          "command": "askfirst.refinePrompt",
+          "command": "askfirst.openPanel",
           "when": "editorHasSelection",
           "group": "1_modification@100"
         }
